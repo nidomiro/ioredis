@@ -1,17 +1,21 @@
-import Redis, { RedisOptions } from 'ioredis';
+import Redis, { Cluster, RedisOptions } from 'ioredis';
 import { RedisModuleOptions } from './redis.interfaces';
 import {
   REDIS_MODULE_CONNECTION,
   REDIS_MODULE_CONNECTION_TOKEN,
-  REDIS_MODULE_OPTIONS_TOKEN
+  REDIS_MODULE_OPTIONS_TOKEN,
 } from './redis.constants';
 
 export function getRedisOptionsToken(connection?: string): string {
-  return `${ connection || REDIS_MODULE_CONNECTION }_${ REDIS_MODULE_OPTIONS_TOKEN }`;
+  return `${
+    connection || REDIS_MODULE_CONNECTION
+  }_${REDIS_MODULE_OPTIONS_TOKEN}`;
 }
 
 export function getRedisConnectionToken(connection?: string): string {
-  return `${ connection || REDIS_MODULE_CONNECTION }_${ REDIS_MODULE_CONNECTION_TOKEN }`;
+  return `${
+    connection || REDIS_MODULE_CONNECTION
+  }_${REDIS_MODULE_CONNECTION_TOKEN}`;
 }
 
 export function createRedisConnection(options: RedisModuleOptions) {
@@ -24,10 +28,23 @@ export function createRedisConnection(options: RedisModuleOptions) {
       const { url, options: { port, host } = {} } = options;
       const connectionOptions: RedisOptions = { ...commonOptions, port, host };
 
-      return url ? new Redis(url, connectionOptions) : new Redis(connectionOptions);
+      return url
+        ? new Redis(url, connectionOptions)
+        : new Redis(connectionOptions);
     default:
       throw new Error('Invalid configuration');
   }
 }
 
-
+export const tryCloseRedisConnectionPermanently = async (
+  redis: Redis | Cluster,
+) => {
+  try {
+    await redis.quit();
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Connection is closed.') {
+      return;
+    }
+    throw error;
+  }
+};

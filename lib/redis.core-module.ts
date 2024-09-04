@@ -1,14 +1,46 @@
-import { DynamicModule, Module, Global, Provider } from '@nestjs/common';
-import { RedisModuleAsyncOptions, RedisModuleOptions, RedisModuleOptionsFactory } from './redis.interfaces';
-import { createRedisConnection, getRedisOptionsToken, getRedisConnectionToken } from './redis.utils'
+import {
+  DynamicModule,
+  Module,
+  Global,
+  Provider,
+  OnApplicationShutdown,
+} from '@nestjs/common';
+import {
+  RedisModuleAsyncOptions,
+  RedisModuleOptions,
+  RedisModuleOptionsFactory,
+} from './redis.interfaces';
+import {
+  createRedisConnection,
+  getRedisOptionsToken,
+  getRedisConnectionToken,
+  tryCloseRedisConnectionPermanently,
+} from './redis.utils';
+import Redis, { Cluster } from 'ioredis';
 
 @Global()
 @Module({})
-export class RedisCoreModule {
+export class RedisCoreModule implements OnApplicationShutdown {
+  private static readonly redisConnections = [] as Array<
+    WeakRef<Redis | Cluster>
+  >;
+
+  public async onApplicationShutdown() {
+    await Promise.all(
+      RedisCoreModule.redisConnections.map(async (connection) => {
+        const redis = connection.deref();
+        if (redis) {
+          await tryCloseRedisConnectionPermanently(redis);
+        }
+      }),
+    );
+  }
 
   /* forRoot */
-  static forRoot(options: RedisModuleOptions, connection?: string): DynamicModule {
-
+  static forRoot(
+    options: RedisModuleOptions,
+    connection?: string,
+  ): DynamicModule {
     const redisOptionsProvider: Provider = {
       provide: getRedisOptionsToken(connection),
       useValue: options,
@@ -16,29 +48,25 @@ export class RedisCoreModule {
 
     const redisConnectionProvider: Provider = {
       provide: getRedisConnectionToken(connection),
-      useValue: createRedisConnection(options),
+      useValue: RedisCoreModule.createAndTrackRedisConnection(options),
     };
 
     return {
       module: RedisCoreModule,
-      providers: [
-        redisOptionsProvider,
-        redisConnectionProvider,
-      ],
-      exports: [
-        redisOptionsProvider,
-        redisConnectionProvider,
-      ],
+      providers: [redisOptionsProvider, redisConnectionProvider],
+      exports: [redisOptionsProvider, redisConnectionProvider],
     };
   }
 
   /* forRootAsync */
-  public static forRootAsync(options: RedisModuleAsyncOptions, connection: string): DynamicModule {
-
+  public static forRootAsync(
+    options: RedisModuleAsyncOptions,
+    connection?: string,
+  ): DynamicModule {
     const redisConnectionProvider: Provider = {
       provide: getRedisConnectionToken(connection),
       useFactory(options: RedisModuleOptions) {
-        return createRedisConnection(options)
+        return RedisCoreModule.createAndTrackRedisConnection(options);
       },
       inject: [getRedisOptionsToken(connection)],
     };
@@ -46,22 +74,27 @@ export class RedisCoreModule {
     return {
       module: RedisCoreModule,
       imports: options.imports,
-      providers: [...this.createAsyncProviders(options, connection), redisConnectionProvider],
+      providers: [
+        ...this.createAsyncProviders(options, connection),
+        redisConnectionProvider,
+      ],
       exports: [redisConnectionProvider],
     };
   }
 
   /* createAsyncProviders */
-  public static createAsyncProviders(options: RedisModuleAsyncOptions, connection?: string): Provider[] {
-
-    if(!(options.useExisting || options.useFactory || options.useClass)) {
-      throw new Error('Invalid configuration. Must provide useFactory, useClass or useExisting');
+  public static createAsyncProviders(
+    options: RedisModuleAsyncOptions,
+    connection?: string,
+  ): Provider[] {
+    if (!(options.useExisting || options.useFactory || options.useClass)) {
+      throw new Error(
+        'Invalid configuration. Must provide useFactory, useClass or useExisting',
+      );
     }
 
     if (options.useExisting || options.useFactory) {
-      return [
-        this.createAsyncOptionsProvider(options, connection)
-      ];
+      return [this.createAsyncOptionsProvider(options, connection)];
     }
 
     return [
@@ -71,10 +104,14 @@ export class RedisCoreModule {
   }
 
   /* createAsyncOptionsProvider */
-  public static createAsyncOptionsProvider(options: RedisModuleAsyncOptions, connection?: string): Provider {
-
-    if(!(options.useExisting || options.useFactory || options.useClass)) {
-      throw new Error('Invalid configuration. Must provide useFactory, useClass or useExisting');
+  public static createAsyncOptionsProvider(
+    options: RedisModuleAsyncOptions,
+    connection?: string,
+  ): Provider {
+    if (!(options.useExisting || options.useFactory || options.useClass)) {
+      throw new Error(
+        'Invalid configuration. Must provide useFactory, useClass or useExisting',
+      );
     }
 
     if (options.useFactory) {
@@ -87,10 +124,18 @@ export class RedisCoreModule {
 
     return {
       provide: getRedisOptionsToken(connection),
-      async useFactory(optionsFactory: RedisModuleOptionsFactory): Promise<RedisModuleOptions> {
+      async useFactory(
+        optionsFactory: RedisModuleOptionsFactory,
+      ): Promise<RedisModuleOptions> {
         return await optionsFactory.createRedisModuleOptions();
       },
       inject: [options.useClass || options.useExisting],
     };
+  }
+
+  protected static createAndTrackRedisConnection(options: RedisModuleOptions) {
+    const redis = createRedisConnection(options);
+    this.redisConnections.push(new WeakRef(redis));
+    return redis;
   }
 }

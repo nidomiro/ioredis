@@ -13,17 +13,8 @@
     "sourceMap": false,
     "outDir": "./dist",
     "rootDir": "./lib",
-    "lib": ["es7"]
+    "lib": ["es7", "ES2021.WeakRef"]
   },
-  "include": [
-    "lib/**/*"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["lib/**/*"],
+  "exclude": ["node_modules"]
 }
-
-
-
-
-   
